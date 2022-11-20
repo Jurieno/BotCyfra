@@ -1,11 +1,15 @@
 from pydoc import cli
+import configparser
 from aiogram.utils import executor #Для запуска бота в онлайн
 from create_bot import dp, bot
 
 import os
 
+config = configparser.ConfigParser()
+config.read('config.ini')
+
 async def on_startup(_):
-    await bot.send_message(os.getenv('idAdmin'), 'Бот запущен')
+    await bot.send_message(config['bot']['idAdmin'], 'Бот запущен')
 
 from handlers import client, admin, other
 
