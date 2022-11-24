@@ -1,6 +1,7 @@
 from aiogram import Bot, types  #Сможем писать анотации типов
 from aiogram.dispatcher import Dispatcher #Улавливает события отправки
 import pymysql
+import aiomysql
 import configparser
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 

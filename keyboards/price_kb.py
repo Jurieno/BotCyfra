@@ -1,7 +1,14 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-b = ['Получить пробный период', 'Назад']
+buttons = ['Получить пробный период', 'Отмена']
 
 kb_price = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
 
-kb_price.add(b)
+for i in buttons:
+    kb_price.add(i)
+
+cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+cancel_kb.add('Отмена')
+
+cancel_ready_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+cancel_ready_kb.add('Завершить отправку').add('Отмена')
