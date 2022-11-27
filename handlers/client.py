@@ -61,10 +61,11 @@ class FSMupdate_user(StatesGroup):
 
 # --------------------------------------------------- /start ---------------------------------------------------------
 async def command_start(message : types.Message):
-    if await valid.check_user(message.from_user.id):
-        await message.answer(unknown_command, reply_markup=types.ReplyKeyboardRemove())
-    else:
-        await message.answer(start_message)
+    if message.chat.type == "private":
+        if await valid.check_user(message.from_user.id):
+            await message.answer(unknown_command, reply_markup=types.ReplyKeyboardRemove())
+        else:
+            await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
         
 # --------------------------------------------------- /start ---------------------------------------------------------
 # ---------------------------------------------------  КОНЕЦ ---------------------------------------------------------
@@ -74,83 +75,82 @@ async def command_start(message : types.Message):
 
 # --------------------------------------------------- /settings ---------------------------------------------------------
 async def cancel_settings(message: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state is None:
-        return
-    await state.finish()
-    if await valid.check_user(message.from_user.id):
-        await message.answer(unknown_command, reply_markup=types.ReplyKeyboardRemove())
-    else:
-        await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
+    if message.chat.type == "private":
+        current_state = await state.get_state()
+        if current_state is None:
+            return
+        await state.finish()
+        if await valid.check_user(message.from_user.id):
+            await message.answer(unknown_command, reply_markup=types.ReplyKeyboardRemove())
+        else:
+            await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
 
 async def settings(message : types.Message):
-    if await valid.check_user(message.from_user.id):
-        await FSMsettings.select_settings.set()
-        await message.answer("Выберите дальнейшие действия.", reply_markup=kb_settings)
+    if message.chat.type == "private":
+        if await valid.check_user(message.from_user.id):
+            await FSMsettings.select_settings.set()
+            await message.answer("Выберите дальнейшие действия.", reply_markup=kb_settings)
+        else:
+            await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
     else:
-        await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
+        await message.reply("Команда может использоваться только в личных сообщениях.")
+    
 
 async def cancel_profile(message: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state is None:
-        return
-    await state.finish()
-    if await valid.check_user(message.from_user.id):
-        await profile(message.from_user.id)
-    else:
-        await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
+    if message.chat.type == "private":
+        current_state = await state.get_state()
+        if current_state is None:
+            return
+        await state.finish()
+        if await valid.check_user(message.from_user.id):
+            await check_profile(message)
+        else:
+            await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
 
 
-async def profile(id_user, rows=None, rows2=None):
-    if rows == None and rows2 == None:
-        with con.cursor() as cur:
-            cur.execute("SELECT `id`, `name`, `photo` FROM `users` WHERE `id` = {}".format(id_user))
-            rows = cur.fetchall()
-            cur.execute("SELECT `id_user`, `hobby` FROM `hobbys` WHERE `id_user` = {}".format(id_user))
-            rows2 = cur.fetchall()
-    await bot.send_photo(id_user, 
-                                        rows[0]['photo'],
-                                        'Имя: {0}\n\nХобби: \n{1}'.format(rows[0]['name'], 
-                                        ', '.join([hobby['hobby'] for hobby in rows2])),reply_markup=reset_kb)
+async def profile(message: types.Message, row_user=None):
+    if row_user == None:
+       row_user = await con("SELECT `name`, `photo`, `hobby` FROM `users` RIGHT OUTER JOIN `hobbys` ON `id` = `id_user` WHERE `id` = {}".format(message.from_user.id))
+    await bot.send_photo(chat_id=message.from_user.id, 
+                        photo=row_user[0][1],
+                        caption='Имя: {0}\n\nХобби: \n{1}'.format(row_user[0][0], ', '.join([hobby[2] for hobby in row_user])),
+                        reply_markup=reset_kb)
     await FSMwait_update_user.wait.set()
+
+async def check_profile(message: types.Message):
+    row_user = await con("SELECT `name`, `photo`, `hobby` FROM `users` LEFT JOIN `hobbys` ON `id_user` = `id` WHERE `id` = {}".format(message.from_user.id))
+    
+    if not row_user:
+        await message.answer('ОШИБКА: О неисправности сообщите Администратору!')
+    else:
+        if row_user[0][0] == None:
+            
+            await FSMuser.name.set()
+            await message.answer('Введите ваше имя.', reply_markup=cancel_kb)
+
+        elif row_user[0][1] == None:
+            await FSMuser.photo.set()
+            await message.answer('Загрузите фото для вашего профиля.', reply_markup=cancel_kb)
+            
+        elif row_user[0][2] == None:
+            await FSMuser.hobby.set()
+            await message.answer("Выберите хобби:", reply_markup=hobby_client)
+            await message.answer('\n'.join(f'{x+1}. {hobbys[x]}' for x in range(len(hobbys) - 1)))
+        
+        else:
+            await profile(message, row_user=row_user)
 
 
 async def select_settings(message: types.Message, state: FSMContext):
-    await state.finish()
     if message.text == 'Профиль':
-        with con.cursor() as cur:
-            cur.execute("SELECT `id`, `name`, `photo` FROM `users` WHERE `id` = {}".format(message.from_user.id))
-            rows = cur.fetchall()
-            cur.execute("SELECT `id_user`, `hobby` FROM `hobbys` WHERE `id_user` = {}".format(message.from_user.id))
-            rows2 = cur.fetchall()
-
-            if not rows:
-                await message.answer('Что-то пошло не так!')
-            else:
-                if rows[0]['name'] == None:
-                    
-                    await FSMuser.name.set()
-                    await message.answer('Введите ваше имя.', reply_markup=cancel_kb)
-
-                elif rows[0]['photo'] == None:
-                    await FSMuser.photo.set()
-                    await message.answer('Загрузите фото для вашего профиля.', reply_markup=cancel_kb)
-                    
-                elif not rows2:
-                    await FSMuser.hobby.set()
-                    await message.answer("Выберите хобби:", reply_markup=hobby_client)
-                    await message.answer('\n'.join(f'{x+1}. {hobbys[x]}' for x in range(len(hobbys) - 1)))
-                
-                else:
-                    await profile(message.from_user.id, rows=rows, rows2=rows2)
-                    
-                
-        
+        await state.finish()
+        await check_profile(message=message)
     elif  message.text == 'Мои мероприятия':
         await message.answer('Функция в разработке.', reply_markup=types.ReplyKeyboardRemove())
         await message.answer(unknown_command)
     else:
-        await message.answer('Действие прервано', reply_markup=types.ReplyKeyboardRemove())
+        await state.finish()
+        await message.answer('Действие прервано.', reply_markup=types.ReplyKeyboardRemove())
         await message.answer(unknown_command)
 
 
@@ -166,16 +166,12 @@ async def select_settings(message: types.Message, state: FSMContext):
 
 async def name_user(message: types.Message):
     await FSMuser.next()
-    with con.cursor() as cur:
-        cur.execute("UPDATE `users` SET `name`='{0}' WHERE `id`={1}".format(message.text, message.from_user.id))
-        con.commit()
+    await con("UPDATE `users` SET `name`='{0}' WHERE `id`={1}".format(message.text, message.from_user.id), "update")
     await message.answer("Загрузите фото для вашего профиля.", reply_markup=cancel_kb)
 
 async def photo_user(message: types.Message):
     await FSMuser.next()
-    with con.cursor() as cur:
-        cur.execute("UPDATE `users` SET `photo`='{0}' WHERE `id`={1}".format(message.photo[0].file_id, message.from_user.id))
-        con.commit()
+    await con("UPDATE `users` SET `photo`='{0}' WHERE `id`={1}".format(message.photo[0].file_id, message.from_user.id), "update")
     await message.answer("Выберите хобби:", reply_markup=hobby_client)
     await message.answer('\n'.join(f'{x+1}. {hobbys[x]}' for x in range(len(hobbys) - 1)))
     
@@ -183,28 +179,24 @@ async def photo_user(message: types.Message):
 
 async def hobby_user(message: types.Message):
     try:
-        with con.cursor() as cur:
-            cur.execute("SELECT `id_user`, `hobby` FROM `hobbys` WHERE `id_user`={0} AND `hobby`='{1}'".format(message.from_user.id, hobbys[int(message.text)-1]))
-            rows = cur.fetchall()
-
-            if not rows:
-                cur.execute("INSERT INTO `hobbys`(`id_user`, `hobby`) VALUES ({0},'{1}')".format(message.from_user.id, hobbys[int(message.text)-1]))
-                await message.answer('✅Хобби {} добавлено'.format(hobbys[int(message.text)-1]))
-            else:
-                cur.execute("DELETE FROM `hobbys` WHERE `id_user`={0} AND `hobby`='{1}'".format(message.from_user.id, hobbys[int(message.text)-1]))
-                await message.answer('❌Хобби {} удалено'.format(hobbys[int(message.text)-1]))
-            
-            con.commit()
+        rows = await con("SELECT `id_user`, `hobby` FROM `hobbys` WHERE `id_user`={0} AND `hobby`='{1}'".format(message.from_user.id, hobbys[int(message.text)-1]))
+        if not rows:
+            await con("INSERT INTO `hobbys`(`id_user`, `hobby`) VALUES ({0},'{1}')".format(message.from_user.id, hobbys[int(message.text)-1]),"insert")
+            await message.answer('✅ Хобби {} добавлено'.format(hobbys[int(message.text)-1]))
+        else:
+            await con("DELETE FROM `hobbys` WHERE `id_user`={0} AND `hobby`='{1}'".format(message.from_user.id, hobbys[int(message.text)-1]),"insert")
+            await message.answer('❌ Хобби {} удалено'.format(hobbys[int(message.text)-1]))
     except Exception as ex:
         print(ex)
 
 async def wait_update(message: types.Message, state: FSMContext):
+    await state.finish()
     if message.text == 'Изменить данные':
-        await state.finish()
         await FSMuser.name.set()
         await message.answer('Введите ваше имя.', reply_markup=cancel_kb)
     else:
-        await message.answer('Неизвестная команда.')
+        await message.answer('Действие прервано', reply_markup=types.ReplyKeyboardRemove())
+        await message.answer(unknown_command)
 
 
 # --------------------------------------------------- Профиль ------------------------------------------------------------
@@ -214,29 +206,28 @@ async def wait_update(message: types.Message, state: FSMContext):
 # --------------------------------------------------- /code ---------------------------------------------------------
 
 async def cmd_code(message: types.Message, command: Command):
-    # Проверяем на пустоту значения
-    if command.args:
-        # Проверяем не ввёл ли пользователь 'NULL'
-        if command.args == 'NULL':
-            await message.answer(code_format)
-        else:
-            with con.cursor() as cur:
-            # True: пользователь зарегистрирован
+    if message.chat.type == "private":
+        if command.args:
+            if command.args == 'NULL':
+                await message.answer(code_format)
+            else:
+                # True: пользователь зарегистрирован
                 if await valid.check_user(message.from_user.id):
                     await message.answer(unknown_command, reply_markup=types.ReplyKeyboardRemove())
                 else:
-                    cur.execute(f"SELECT * FROM `codes` WHERE `code`='{command.args}'")
-                    rows = cur.fetchall()
+                    rows = await con(f"SELECT * FROM `codes` WHERE `code`='{command.args}'")
 
                     if not rows:
                         await message.answer(invalid_code)
                     else:
-                        cur.execute(f"DELETE FROM `codes` WHERE `code`='{command.args}'")
-                        cur.execute(f"INSERT INTO `users`(`id`, `id_role`, `id_company`, `activate`) VALUES ({message.from_user.id},3,{rows[0]['id_company']},true)")
-                        con.commit()
-                        await message.answer(unknown_command, reply_markup=types.ReplyKeyboardRemove())
+                        await con(f"DELETE FROM `codes` WHERE `code`='{command.args}'","delete")
+                        await con(f"INSERT INTO `users`(`id`, `id_role`, `id_company`, `activate`) VALUES ({message.from_user.id},3,{rows[0][1]},true)","insert")
+                        await message.answer("Заполните профиль введя команду /settings", reply_markup=types.ReplyKeyboardRemove())
+        else:
+            await message.answer(code_format)
     else:
-        await message.answer(code_format)
+        await message.reply("Команда может использоваться только в личных сообщениях.")
+    
 
 # --------------------------------------------------- /code ---------------------------------------------------------
 # --------------------------------------------------- КОНЕЦ ---------------------------------------------------------
@@ -247,17 +238,15 @@ async def cmd_code(message: types.Message, command: Command):
 # --------------------------------------------------- /search ---------------------------------------------------------
 
 async def search(message: types.Message):
-    if await valid.check_user(message.from_user.id):
-        with con.cursor() as cur:
-            cur.execute("SELECT `id_company` FROM `users` WHERE `id` = {}".format(message.from_user.id))
-            rows = cur.fetchall()
-            cur.execute("SELECT `id`,`activate`, `name`, `photo` FROM `users` WHERE `id` != {0} AND `id_company` = {1}".format(
-                message.from_user.id,
-                rows[0]['id_company']
-            ))
+    if message.chat.type == "private":
+        if await valid.check_user(message.from_user.id):
 
-    else:
-        await message.answer(start_message)
+            row_user = await con(
+                '''SELECT `id` FROM `users` JOIN `hobbys` ON `id` = `id_user` WHERE `id_company` = (SELECT `id_company` FROM `users` WHERE `id` = 1026555793) AND `id` != 1026555793 AND `id` != (SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = 1026555793)  AND `hobby` = "Спорт"'''.format(message.from_user.id))
+            print(row_user)
+
+        else:
+            await message.answer(start_message)
     
 
 async def handle_search(message: types.Message):
@@ -275,9 +264,13 @@ async def handle_search(message: types.Message):
 # --------------------------------------------------- /price ---------------------------------------------------------
 
 async def price(message: types.Message):
-    await FSMprice.trial_period.set()
-    photo = open('./src/price.png', 'rb')
-    await bot.send_photo(message.from_user.id, photo, reply_markup=kb_price)
+    if message.chat.type == "private":
+        await FSMprice.trial_period.set()
+        photo = open('./src/price.png', 'rb')
+        await bot.send_photo(message.from_user.id, photo, reply_markup=kb_price)
+    else:
+        await message.reply("Команда может использоваться только в личных сообщениях.")
+    
     
 async def cancel_handler(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
@@ -315,11 +308,8 @@ async def communication(message: types.Message, state: FSMContext):
 
 
 async def data_veryfi(message: types.Message, state: FSMContext):
-    
     async with state.proxy() as data:
-        with con.cursor() as cur:
-            cur.execute("INSERT INTO `company`(`am_employs`, `name`, `communication`) VALUES ({0},'{1}','{2}')".format(data['num_employs'],data['name_company'],data['communication']))
-            con.commit()
+        await con("INSERT INTO `company`(`am_employs`, `name`, `communication`) VALUES ({0},'{1}','{2}')".format(data['num_employs'],data['name_company'],data['communication']),"insert")
     await bot.send_message(message.from_user.id, 'Данные сохранены, ожидайте, Администрация с вами свяжется')
 
     await state.finish()

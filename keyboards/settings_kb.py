@@ -1,6 +1,6 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-buttons = ['Профиль','Мои мероприятия', 'Отмена']
+buttons = ['Профиль', 'Отмена'] # Добавить мои мероприятия сюда
 
 kb_settings = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
 
