@@ -8,6 +8,7 @@ from aiogram.utils.markdown import hide_link
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.filters import Text
+from magic_filter import F
 
 # --------------------------------------------------- FSMprice ---------------------------------------------------------
 
@@ -24,7 +25,7 @@ class FSMprice(StatesGroup):
 # --------------------------------------------------- FSMsettings ---------------------------------------------------------
 
 class FSMsettings(StatesGroup):
-    select_settings = State()
+    check_profile = State()
 # --------------------------------------------------- FSMsettings ---------------------------------------------------------
 # ---------------------------------------------------   КОНЕЦ     ---------------------------------------------------------
 
@@ -71,15 +72,14 @@ async def command_start(message : types.Message):
 # ---------------------------------------------------  КОНЕЦ ---------------------------------------------------------
 
 
-
-
 # --------------------------------------------------- /settings ---------------------------------------------------------
+
 async def cancel_settings(message: types.Message, state: FSMContext):
     if message.chat.type == "private":
-        current_state = await state.get_state()
-        if current_state is None:
+        if await state.get_state() is None:
             return
         await state.finish()
+
         if await valid.check_user(message.from_user.id):
             await message.answer(unknown_command, reply_markup=types.ReplyKeyboardRemove())
         else:
@@ -88,14 +88,13 @@ async def cancel_settings(message: types.Message, state: FSMContext):
 async def settings(message : types.Message):
     if message.chat.type == "private":
         if await valid.check_user(message.from_user.id):
-            await FSMsettings.select_settings.set()
+            await FSMsettings.check_profile.set()
             await message.answer("Выберите дальнейшие действия.", reply_markup=kb_settings)
         else:
             await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
     else:
         await message.reply("Команда может использоваться только в личных сообщениях.")
     
-
 async def cancel_profile(message: types.Message, state: FSMContext):
     if message.chat.type == "private":
         current_state = await state.get_state()
@@ -103,66 +102,50 @@ async def cancel_profile(message: types.Message, state: FSMContext):
             return
         await state.finish()
         if await valid.check_user(message.from_user.id):
-            await check_profile(message)
+            await check_profile(message, state)
         else:
             await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
 
+async def profile(message: types.Message, state: FSMContext, row_user=None):
+    async with state.proxy() as data:
+        data['row_user'] = row_user
+        if data['row_user'] == None:
+            data['row_user'] = await con("SELECT `name`, `photo`, `hobby` FROM `users` RIGHT OUTER JOIN `hobbys` ON `id` = `id_user` WHERE `id` = {}".format(message.from_user.id))
+        await bot.send_photo(chat_id=message.from_user.id, 
+                            photo=data['row_user'][0][1],
+                            caption='Имя: {0}\n\nХобби: \n{1}'.format(data['row_user'][0][0], ', '.join([hobby[2] for hobby in data['row_user']])),
+                            reply_markup=reset_kb)
+        await FSMwait_update_user.wait.set()
 
-async def profile(message: types.Message, row_user=None):
-    if row_user == None:
-       row_user = await con("SELECT `name`, `photo`, `hobby` FROM `users` RIGHT OUTER JOIN `hobbys` ON `id` = `id_user` WHERE `id` = {}".format(message.from_user.id))
-    await bot.send_photo(chat_id=message.from_user.id, 
-                        photo=row_user[0][1],
-                        caption='Имя: {0}\n\nХобби: \n{1}'.format(row_user[0][0], ', '.join([hobby[2] for hobby in row_user])),
-                        reply_markup=reset_kb)
-    await FSMwait_update_user.wait.set()
-
-async def check_profile(message: types.Message):
-    row_user = await con("SELECT `name`, `photo`, `hobby` FROM `users` LEFT JOIN `hobbys` ON `id_user` = `id` WHERE `id` = {}".format(message.from_user.id))
-    
-    if not row_user:
-        await message.answer('ОШИБКА: О неисправности сообщите Администратору!')
-    else:
-        if row_user[0][0] == None:
-            
-            await FSMuser.name.set()
-            await message.answer('Введите ваше имя.', reply_markup=cancel_kb)
-
-        elif row_user[0][1] == None:
-            await FSMuser.photo.set()
-            await message.answer('Загрузите фото для вашего профиля.', reply_markup=cancel_kb)
-            
-        elif row_user[0][2] == None:
-            await FSMuser.hobby.set()
-            await message.answer("Выберите хобби:", reply_markup=hobby_client)
-            await message.answer('\n'.join(f'{x+1}. {hobbys[x]}' for x in range(len(hobbys) - 1)))
-        
+async def check_profile(message: types.Message, state: FSMContext):
+    await state.finish()
+    async with state.proxy() as data:
+        data['row_user'] = await con("SELECT `name`, `photo`, `hobby` FROM `users` LEFT JOIN `hobbys` ON `id_user` = `id` WHERE `id` = {}".format(message.from_user.id))
+        if not data['row_user']:
+            await message.answer('ОШИБКА: О неисправности сообщите Администратору!')
         else:
-            await profile(message, row_user=row_user)
+            if data['row_user'][0][0] == None:
+                
+                await FSMuser.name.set()
+                await message.answer('Введите ваше имя.', reply_markup=cancel_kb)
 
-
-async def select_settings(message: types.Message, state: FSMContext):
-    if message.text == 'Профиль':
-        await state.finish()
-        await check_profile(message=message)
-    elif  message.text == 'Мои мероприятия':
-        await message.answer('Функция в разработке.', reply_markup=types.ReplyKeyboardRemove())
-        await message.answer(unknown_command)
-    else:
-        await state.finish()
-        await message.answer('Действие прервано.', reply_markup=types.ReplyKeyboardRemove())
-        await message.answer(unknown_command)
-
+            elif data['row_user'][0][1] == None:
+                await FSMuser.photo.set()
+                await message.answer('Загрузите фото для вашего профиля.', reply_markup=cancel_kb)
+                
+            elif data['row_user'][0][2] == None:
+                await FSMuser.hobby.set()
+                await message.answer("Выберите хобби:", reply_markup=hobby_client)
+                await message.answer('\n'.join(f'{x+1}. {hobbys[x]}' for x in range(len(hobbys) - 1)))
+            
+            else:
+                await profile(message,state, row_user=data['row_user'])
 
 # --------------------------------------------------- /settings ---------------------------------------------------------
 # ---------------------------------------------------    КОНЕЦ  ---------------------------------------------------------
 
 
-
-
-
 # --------------------------------------------------- Профиль ------------------------------------------------------------
-
 
 async def name_user(message: types.Message):
     await FSMuser.next()
@@ -175,29 +158,23 @@ async def photo_user(message: types.Message):
     await message.answer("Выберите хобби:", reply_markup=hobby_client)
     await message.answer('\n'.join(f'{x+1}. {hobbys[x]}' for x in range(len(hobbys) - 1)))
     
-    
-
-async def hobby_user(message: types.Message):
+async def hobby_user(message: types.Message, state: FSMContext):
     try:
-        rows = await con("SELECT `id_user`, `hobby` FROM `hobbys` WHERE `id_user`={0} AND `hobby`='{1}'".format(message.from_user.id, hobbys[int(message.text)-1]))
-        if not rows:
-            await con("INSERT INTO `hobbys`(`id_user`, `hobby`) VALUES ({0},'{1}')".format(message.from_user.id, hobbys[int(message.text)-1]),"insert")
-            await message.answer('✅ Хобби {} добавлено'.format(hobbys[int(message.text)-1]))
-        else:
-            await con("DELETE FROM `hobbys` WHERE `id_user`={0} AND `hobby`='{1}'".format(message.from_user.id, hobbys[int(message.text)-1]),"insert")
-            await message.answer('❌ Хобби {} удалено'.format(hobbys[int(message.text)-1]))
-    except Exception as ex:
+        async with state.proxy() as data:
+            data["hobby"] = await con("SELECT `id_user`, `hobby` FROM `hobbys` WHERE `id_user`={0} AND `hobby`='{1}'".format(message.from_user.id, hobbys[int(message.text)-1]))
+            if not data["hobby"]:
+                await con("INSERT INTO `hobbys`(`id_user`, `hobby`) VALUES ({0},'{1}')".format(message.from_user.id, hobbys[int(message.text)-1]),"insert")
+                await message.answer('✅ Хобби {} добавлено'.format(hobbys[int(message.text)-1]))
+            else:
+                await con("DELETE FROM `hobbys` WHERE `id_user`={0} AND `hobby`='{1}'".format(message.from_user.id, hobbys[int(message.text)-1]),"insert")
+                await message.answer('❌ Хобби {} удалено'.format(hobbys[int(message.text)-1]))
+    except ValueError as ex:
         print(ex)
 
 async def wait_update(message: types.Message, state: FSMContext):
     await state.finish()
-    if message.text == 'Изменить данные':
-        await FSMuser.name.set()
-        await message.answer('Введите ваше имя.', reply_markup=cancel_kb)
-    else:
-        await message.answer('Действие прервано', reply_markup=types.ReplyKeyboardRemove())
-        await message.answer(unknown_command)
-
+    await FSMuser.name.set()
+    await message.answer('Введите ваше имя.', reply_markup=cancel_kb)
 
 # --------------------------------------------------- Профиль ------------------------------------------------------------
 # ---------------------------------------------------  КОНЕЦ  ------------------------------------------------------------
@@ -228,37 +205,36 @@ async def cmd_code(message: types.Message, command: Command):
     else:
         await message.reply("Команда может использоваться только в личных сообщениях.")
     
-
 # --------------------------------------------------- /code ---------------------------------------------------------
 # --------------------------------------------------- КОНЕЦ ---------------------------------------------------------
 
 
-
-
 # --------------------------------------------------- /search ---------------------------------------------------------
 
-async def search(message: types.Message):
+async def search(message: types.Message, state: FSMContext):
     if message.chat.type == "private":
         if await valid.check_user(message.from_user.id):
-
-            row_user = await con(
-                '''SELECT `id` FROM `users` JOIN `hobbys` ON `id` = `id_user` WHERE `id_company` = (SELECT `id_company` FROM `users` WHERE `id` = 1026555793) AND `id` != 1026555793 AND `id` != (SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = 1026555793)  AND `hobby` = "Спорт"'''.format(message.from_user.id))
-            print(row_user)
-
+            if await con("(SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {})".format(message.from_user.id)):
+                async with state.proxy() as data:
+                    data['my_hobby'] = await con("SELECT `hobby` FROM `hobbys` WHERE `id_user` = {}".format(message.from_user.id))
+                    print(await search_query(message, state))
+                        
+            else:
+                #await search_query(message)
+                pass
         else:
             await message.answer(start_message)
-    
+
+async def search_query(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['query'] = f"SELECT `id` FROM `users` JOIN `hobbys` ON `id` = `id_user` WHERE `id_company` = (SELECT `id_company` FROM `users` WHERE `id` = {message.from_user.id}) AND `id` != {message.from_user.id} AND `id` != (SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {message.from_user.id}) AND `hobby` = '{data['my_hobby']}' ORDER BY RAND() LIMIT 1"
+        return await con(data['query'])
 
 async def handle_search(message: types.Message):
     pass
 
 # --------------------------------------------------- /search ---------------------------------------------------------
 # --------------------------------------------------- КОНЕЦ ---------------------------------------------------------
-
-
-
-
-
 
 
 # --------------------------------------------------- /price ---------------------------------------------------------
@@ -271,7 +247,6 @@ async def price(message: types.Message):
     else:
         await message.reply("Команда может использоваться только в личных сообщениях.")
     
-    
 async def cancel_handler(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
@@ -283,7 +258,6 @@ async def hand_price(message: types.Message):
     await FSMprice.next()
     await message.reply("Введите название компании.", reply_markup=cancel_kb)
         
-
 async def company(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['name_company'] = message.text
@@ -306,7 +280,6 @@ async def communication(message: types.Message, state: FSMContext):
                                f"{data['communication']}\n\nЕсли что-то введено неверно, нажмите кнопку: ОТМЕНА", reply_markup=cancel_ready_kb)
         await FSMprice.next()
 
-
 async def data_veryfi(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         await con("INSERT INTO `company`(`am_employs`, `name`, `communication`) VALUES ({0},'{1}','{2}')".format(data['num_employs'],data['name_company'],data['communication']),"insert")
@@ -317,9 +290,6 @@ async def data_veryfi(message: types.Message, state: FSMContext):
 # --------------------------------------------------- /price ---------------------------------------------------------
 # ---------------------------------------------------  КОНЕЦ ---------------------------------------------------------
 
-
-
-
 def register_handlers_client(dp : Dispatcher):
     dp.register_message_handler(command_start, commands=['start'])
 
@@ -328,14 +298,14 @@ def register_handlers_client(dp : Dispatcher):
     dp.register_message_handler(settings, commands=['settings'], state=None)
     dp.register_message_handler(cancel_settings, state="*", commands='отмена')
     dp.register_message_handler(cancel_settings, Text(equals='отмена', ignore_case=True), state="*")
-    dp.register_message_handler(select_settings, state=FSMsettings.select_settings)
+    dp.register_message_handler(check_profile, Text(equals='Профиль', ignore_case=True), state=FSMsettings.check_profile)
 
     dp.register_message_handler(cancel_profile, Text(equals='завершить', ignore_case=True), state="*")
     dp.register_message_handler(name_user,  state=FSMuser.name)
     dp.register_message_handler(photo_user, content_types=['photo'], state=FSMuser.photo)
     dp.register_message_handler(hobby_user, state=FSMuser.hobby)
 
-    dp.register_message_handler(wait_update, state=FSMwait_update_user.wait)
+    dp.register_message_handler(wait_update, Text(equals='Изменить данные', ignore_case=True), state=FSMwait_update_user.wait)
 
     dp.register_message_handler(price, commands=['price'], state=None)
     dp.register_message_handler(hand_price, state=FSMprice.trial_period)
