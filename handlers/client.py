@@ -1,10 +1,10 @@
 from aiogram import types, Dispatcher
 from create_bot import dp, bot, con
 from keyboards import kb_price, cancel_kb, cancel_ready_kb, kb_settings, hobby_client, hobbys, reset_kb
+from keyboards import kb_search, kb_ankets
 from handlers import valid
 from aiogram.dispatcher.filters import Command
 from text.index import unknown_command, code_format, invalid_code, start_message
-from aiogram.utils.markdown import hide_link
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.filters import Text
@@ -31,12 +31,15 @@ class FSMsettings(StatesGroup):
 
 
 
-# --------------------------------------------------- FSMsettings ---------------------------------------------------------
+# --------------------------------------------------- FSMsearch ---------------------------------------------------------
 
 class FSMsearch(StatesGroup):
     search = State()
-# --------------------------------------------------- FSMsettings ---------------------------------------------------------
-# ---------------------------------------------------   КОНЕЦ     ---------------------------------------------------------
+
+class FSMwaitankets(StatesGroup):
+    wait = State()
+# --------------------------------------------------- FSMsearch ---------------------------------------------------------
+# ---------------------------------------------------   КОНЕЦ   ---------------------------------------------------------
 
 
 
@@ -55,7 +58,7 @@ class FSMupdate_user(StatesGroup):
     photo = State()
     hobby = State()
 # --------------------------------------------------- FSMuser ---------------------------------------------------------
-# ---------------------------------------------------   КОНЕЦ     ---------------------------------------------------------
+# ---------------------------------------------------  КОНЕЦ  ---------------------------------------------------------
 
 
 
@@ -211,27 +214,49 @@ async def cmd_code(message: types.Message, command: Command):
 
 # --------------------------------------------------- /search ---------------------------------------------------------
 
+async def func_search(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['my_hobby'] = await con("SELECT `hobby` FROM `hobbys` WHERE `id_user` = {}".format(message.from_user.id))
+        data['query'] = f"SELECT `id` FROM `users` JOIN `hobbys` ON `id` = `id_user` WHERE `id_company` = (SELECT `id_company` FROM `users` WHERE `id` = {message.from_user.id}) AND `id` != {message.from_user.id} AND `id` != (SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {message.from_user.id}) " + "AND (`hobby` = '" + " `hobby` = '".join([data['hobby'][0] + "' OR" for data['hobby'] in data['my_hobby']])[:-3] + ") ORDER BY RAND() LIMIT 1"
+        data['id_searched'] = await con(data['query'])
+        data['row_user'] = await con("SELECT `name`, `photo`, `hobby` FROM `users` RIGHT OUTER JOIN `hobbys` ON `id` = `id_user` WHERE `id` = {}".format(data['id_searched'][0][0]))
+        await bot.send_photo(chat_id=message.from_user.id, 
+                photo=data['row_user'][0][1],
+                caption='Имя: {0}\n\nХобби: \n{1}'.format(data['row_user'][0][0], ', '.join([hobby[2] for hobby in data['row_user']])),
+                reply_markup=kb_search)
+        await con("INSERT INTO `ankets`(`id_smotr`, `id_prosmotr`, `date_at`,`checked`) VALUES ({0},{1},NOW(),'0')".format(message.from_user.id,data['id_searched'][0][0]), "insert")
+
+
 async def search(message: types.Message, state: FSMContext):
     if message.chat.type == "private":
         if await valid.check_user(message.from_user.id):
-            if await con("(SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {})".format(message.from_user.id)):
-                async with state.proxy() as data:
-                    data['my_hobby'] = await con("SELECT `hobby` FROM `hobbys` WHERE `id_user` = {}".format(message.from_user.id))
-                    print(await search_query(message, state))
-                        
-            else:
-                #await search_query(message)
-                pass
+            
+            async with state.proxy() as data: 
+                data['rows'] = await con("(SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {} LIMIT 1)".format(message.from_user.id))
+                if not data['rows']:
+                    await con("INSERT INTO `ankets`(`id_smotr`, `id_prosmotr`, `date_at`,`checked`) VALUES ({0},{0},NOW(),'1')".format(message.from_user.id), "insert")
+                await func_search(message, state)
+                await FSMsearch.search.set()
         else:
             await message.answer(start_message)
 
-async def search_query(message: types.Message, state: FSMContext):
+async def like_search(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
-        data['query'] = f"SELECT `id` FROM `users` JOIN `hobbys` ON `id` = `id_user` WHERE `id_company` = (SELECT `id_company` FROM `users` WHERE `id` = {message.from_user.id}) AND `id` != {message.from_user.id} AND `id` != (SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {message.from_user.id}) AND `hobby` = '{data['my_hobby']}' ORDER BY RAND() LIMIT 1"
-        return await con(data['query'])
+        data['id_searched'] = await con(f"SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {message.from_user.id} ORDER BY `date_at` LIMIT 1")
+        await bot.send_message(data['id_searched'][0][0], "С вами хотят общаться, хотите проверить кто?", reply_markup=kb_ankets)
+        data['state'] = dp.current_state(data['id_searched'][0][0])
+        await data['state'].set_state(FSMwaitankets.wait)
 
-async def handle_search(message: types.Message):
-    pass
+
+async def dislike_search(message: types.Message):
+    await message.answer('Вы дизлайкнули')
+
+async def zzz_search(message: types.Message):
+    await message.answer('Вы уснули')
+
+async def wait_ankets_true(message: types.Message, state: FSMContext):
+    state.finish()
+    await message.answer("Тут пока ничего нет)")
 
 # --------------------------------------------------- /search ---------------------------------------------------------
 # --------------------------------------------------- КОНЕЦ ---------------------------------------------------------
@@ -314,7 +339,12 @@ def register_handlers_client(dp : Dispatcher):
     dp.register_message_handler(communication, state=FSMprice.communication)
     dp.register_message_handler(data_veryfi, state=FSMprice.data_veryfi)
 
+    dp.register_message_handler(wait_ankets_true, Text(equals='👍', ignore_case=True), state=FSMwaitankets.wait)
+    dp.register_message_handler(cancel_settings, Text(equals='❌', ignore_case=True), state=FSMwaitankets.wait)
     dp.register_message_handler(search, commands=['search'], state=None)
-    dp.register_message_handler(handle_search, state=FSMsearch.search)
+    dp.register_message_handler(like_search, Text(equals='👍', ignore_case=True), state=FSMsearch.search)
+    dp.register_message_handler(dislike_search, Text(equals='❌', ignore_case=True), state=FSMsearch.search)
+    dp.register_message_handler(zzz_search, Text(equals='💤', ignore_case=True), state=FSMsearch.search)
+    
 
     dp.register_message_handler(command_start, commands=[''])
