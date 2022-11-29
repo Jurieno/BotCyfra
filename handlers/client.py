@@ -10,6 +10,8 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.filters import Text
 from magic_filter import F
 
+import datetime
+
 # --------------------------------------------------- FSMprice ---------------------------------------------------------
 
 class FSMprice(StatesGroup):
@@ -38,6 +40,9 @@ class FSMsearch(StatesGroup):
 
 class FSMwaitankets(StatesGroup):
     wait = State()
+
+class FSM_refresh_ankets(StatesGroup):
+    refresh = State()
 # --------------------------------------------------- FSMsearch ---------------------------------------------------------
 # ---------------------------------------------------   КОНЕЦ   ---------------------------------------------------------
 
@@ -215,17 +220,31 @@ async def cmd_code(message: types.Message, command: Command):
 # --------------------------------------------------- /search ---------------------------------------------------------
 
 async def func_search(message: types.Message, state: FSMContext):
+    timer = datetime.datetime.now()
     async with state.proxy() as data:
         data['my_hobby'] = await con("SELECT `hobby` FROM `hobbys` WHERE `id_user` = {}".format(message.from_user.id))
-        data['query'] = f"SELECT `id` FROM `users` JOIN `hobbys` ON `id` = `id_user` WHERE `id_company` = (SELECT `id_company` FROM `users` WHERE `id` = {message.from_user.id}) AND `id` != {message.from_user.id} AND `id` != (SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {message.from_user.id}) " + "AND (`hobby` = '" + " `hobby` = '".join([data['hobby'][0] + "' OR" for data['hobby'] in data['my_hobby']])[:-3] + ") ORDER BY RAND() LIMIT 1"
-        data['id_searched'] = await con(data['query'])
-        data['row_user'] = await con("SELECT `name`, `photo`, `hobby` FROM `users` RIGHT OUTER JOIN `hobbys` ON `id` = `id_user` WHERE `id` = {}".format(data['id_searched'][0][0]))
-        await bot.send_photo(chat_id=message.from_user.id, 
-                photo=data['row_user'][0][1],
-                caption='Имя: {0}\n\nХобби: \n{1}'.format(data['row_user'][0][0], ', '.join([hobby[2] for hobby in data['row_user']])),
-                reply_markup=kb_search)
-        await con("INSERT INTO `ankets`(`id_smotr`, `id_prosmotr`, `date_at`,`checked`) VALUES ({0},{1},NOW(),'0')".format(message.from_user.id,data['id_searched'][0][0]), "insert")
 
+        data['query'] = f"SELECT `id` FROM `users` JOIN `hobbys` ON `id` = `id_user` WHERE `id_company` = (SELECT `id_company` FROM `users` WHERE `id` = {message.from_user.id}) AND `id` NOT IN (SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {message.from_user.id}) AND (`hobby` IN ('"+"','".join([data['hobby'][0] for data['hobby'] in data['my_hobby']])+"')) ORDER BY RAND() LIMIT 1"
+        data['id_searched'] = await con(data['query'])
+        if data['id_searched']:
+            data['row_user'] = await con("SELECT `name`, `photo`, `hobby` FROM `users` RIGHT OUTER JOIN `hobbys` ON `id` = `id_user` WHERE `id` = {}".format(data['id_searched'][0][0]))
+        else:
+            data['query'] = f"SELECT `id` FROM `users` JOIN `hobbys` ON `id` = `id_user` WHERE `id_company` = (SELECT `id_company` FROM `users` WHERE `id` = {message.from_user.id}) AND `id` NOT IN (SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {message.from_user.id}) ORDER BY RAND() LIMIT 1"
+            data['id_searched'] = await con(data['query'])
+            if not data['id_searched']:
+                await state.finish()
+                await FSM_refresh_ankets.refresh.set()
+                await message.answer("К сожалению вы просмотрели все анкеты. Хотите просмотреть заново?")
+        
+        if data['id_searched']:        
+            data['row_user'] = await con("SELECT `name`, `photo`, `hobby` FROM `users` RIGHT OUTER JOIN `hobbys` ON `id` = `id_user` WHERE `id` = {}".format(data['id_searched'][0][0]))
+            await bot.send_photo(chat_id=message.from_user.id, 
+                    photo=data['row_user'][0][1],
+                    caption='Имя: {0}\n\nХобби: \n{1}'.format(data['row_user'][0][0], ', '.join([hobby[2] for hobby in data['row_user']])),
+                    reply_markup=kb_search)
+            await con("INSERT INTO `ankets`(`id_smotr`, `id_prosmotr`, `date_at`,`checked`) VALUES ({0},{1},NOW(),0)".format(message.from_user.id,data['id_searched'][0][0]), "insert")
+                
+    print(datetime.datetime.now() - timer)
 
 async def search(message: types.Message, state: FSMContext):
     if message.chat.type == "private":
@@ -234,9 +253,10 @@ async def search(message: types.Message, state: FSMContext):
             async with state.proxy() as data: 
                 data['rows'] = await con("(SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {} LIMIT 1)".format(message.from_user.id))
                 if not data['rows']:
-                    await con("INSERT INTO `ankets`(`id_smotr`, `id_prosmotr`, `date_at`,`checked`) VALUES ({0},{0},NOW(),'1')".format(message.from_user.id), "insert")
-                await func_search(message, state)
+                    await con("INSERT INTO `ankets`(`id_smotr`, `id_prosmotr`, `date_at`,`checked`) VALUES ({0},{0},NOW(),1)".format(message.from_user.id), "insert")
                 await FSMsearch.search.set()
+                await func_search(message, state)
+                
         else:
             await message.answer(start_message)
 
@@ -244,19 +264,32 @@ async def like_search(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['id_searched'] = await con(f"SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {message.from_user.id} ORDER BY `date_at` LIMIT 1")
         await bot.send_message(data['id_searched'][0][0], "С вами хотят общаться, хотите проверить кто?", reply_markup=kb_ankets)
-        data['state'] = dp.current_state(data['id_searched'][0][0])
-        await data['state'].set_state(FSMwaitankets.wait)
+        await dp.current_state(user=data['id_searched'][0][0]).set_state(FSMwaitankets.wait)
 
+    await func_search(message, state)
 
-async def dislike_search(message: types.Message):
-    await message.answer('Вы дизлайкнули')
+async def dislike_search(message: types.Message, state: FSMContext):
+    await func_search(message, state)
 
-async def zzz_search(message: types.Message):
-    await message.answer('Вы уснули')
+async def zzz_search(message: types.Message, state: FSMContext):
+    async with state.proxy() as data:
+        data['current_state'] = await state.get_state()
+        if data['current_state'] is None:
+            return
+        await state.finish()
+        if await valid.check_user(message.from_user.id):
+            await check_profile(message, state)
+        else:
+            await message.answer(start_message, reply_markup=types.ReplyKeyboardRemove())
 
 async def wait_ankets_true(message: types.Message, state: FSMContext):
-    state.finish()
+    await state.finish()
     await message.answer("Тут пока ничего нет)")
+
+async def refreshing(message: types.Message, state: FSMContext):
+    await state.finish()
+    await con("DELETE FROM `ankets` WHERE `id_smotr` = {0} AND `id_prosmotr` != {0}".format(message.from_user.id),"delete")
+    await func_search(message, state)
 
 # --------------------------------------------------- /search ---------------------------------------------------------
 # --------------------------------------------------- КОНЕЦ ---------------------------------------------------------
@@ -321,16 +354,14 @@ def register_handlers_client(dp : Dispatcher):
     dp.register_message_handler(cmd_code, commands=['code'])
 
     dp.register_message_handler(settings, commands=['settings'], state=None)
-    dp.register_message_handler(cancel_settings, state="*", commands='отмена')
     dp.register_message_handler(cancel_settings, Text(equals='отмена', ignore_case=True), state="*")
     dp.register_message_handler(check_profile, Text(equals='Профиль', ignore_case=True), state=FSMsettings.check_profile)
-
     dp.register_message_handler(cancel_profile, Text(equals='завершить', ignore_case=True), state="*")
     dp.register_message_handler(name_user,  state=FSMuser.name)
     dp.register_message_handler(photo_user, content_types=['photo'], state=FSMuser.photo)
     dp.register_message_handler(hobby_user, state=FSMuser.hobby)
-
     dp.register_message_handler(wait_update, Text(equals='Изменить данные', ignore_case=True), state=FSMwait_update_user.wait)
+
 
     dp.register_message_handler(price, commands=['price'], state=None)
     dp.register_message_handler(hand_price, state=FSMprice.trial_period)
@@ -339,12 +370,16 @@ def register_handlers_client(dp : Dispatcher):
     dp.register_message_handler(communication, state=FSMprice.communication)
     dp.register_message_handler(data_veryfi, state=FSMprice.data_veryfi)
 
+
+    dp.register_message_handler(search, commands=['search'], state=None)
     dp.register_message_handler(wait_ankets_true, Text(equals='👍', ignore_case=True), state=FSMwaitankets.wait)
     dp.register_message_handler(cancel_settings, Text(equals='❌', ignore_case=True), state=FSMwaitankets.wait)
-    dp.register_message_handler(search, commands=['search'], state=None)
     dp.register_message_handler(like_search, Text(equals='👍', ignore_case=True), state=FSMsearch.search)
     dp.register_message_handler(dislike_search, Text(equals='❌', ignore_case=True), state=FSMsearch.search)
     dp.register_message_handler(zzz_search, Text(equals='💤', ignore_case=True), state=FSMsearch.search)
+    
+    dp.register_message_handler(cancel_settings, Text(equals='Нет', ignore_case=True), state=FSM_refresh_ankets.refresh)
+    dp.register_message_handler(refreshing, Text(equals='Да', ignore_case=True), state=FSM_refresh_ankets.refresh)
     
 
     dp.register_message_handler(command_start, commands=[''])
