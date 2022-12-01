@@ -21,6 +21,7 @@ class FSMprice(StatesGroup):
     num_employs = State()
     communication = State()
     data_veryfi = State()
+
 # --------------------------------------------------- FSMprice ---------------------------------------------------------
 # --------------------------------------------------- КОНЕЦ ---------------------------------------------------------
 
@@ -65,11 +66,13 @@ class FSMupdate_user(StatesGroup):
     name = State()
     photo = State()
     hobby = State()
+
 # --------------------------------------------------- FSMuser ---------------------------------------------------------
 # ---------------------------------------------------  КОНЕЦ  ---------------------------------------------------------
 
 
 # --------------------------------------------------- /start ---------------------------------------------------------
+
 async def command_start(message: types.Message):
     if message.chat.type == "private":
         if await valid.check_user(message.from_user.id):
@@ -252,7 +255,7 @@ async def func_search(message: types.Message, state: FSMContext):
             await bot.send_photo(chat_id=message.from_user.id,
                                  photo=data['row_user'][0][1],
                                  caption='Имя: {0}\n\nХобби: \n{1}'.format(
-                                    data['row_user'][0][0], ', '.join([hobby[2] for hobby in data['row_user']])),
+                                     data['row_user'][0][0], ', '.join([hobby[2] for hobby in data['row_user']])),
                                  reply_markup=kb_search)
             await con("INSERT INTO `ankets`(`id_smotr`, `id_prosmotr`, `date_at`,`checked`) VALUES ({0},{1},NOW(),0)".format(message.from_user.id, data['id_searched'][0][0]), "insert")
 
@@ -266,7 +269,7 @@ async def search(message: types.Message, state: FSMContext):
             async with state.proxy() as data:
                 data['rows'] = await con("(SELECT `id_prosmotr` FROM `ankets` WHERE `id_smotr` = {} LIMIT 1)".format(message.from_user.id))
                 if not data['rows']:
-                    await con("INSERT INTO `ankets`(`id_smotr`, `id_prosmotr`, `date_at`,`checked`) VALUES ({0},{0},NOW(),1)".format(message.from_user.id), "insert")
+                    await con("INSERT INTO `ankets`(`id_smotr`, `id_prosmotr`, `date_at`, `checked`) VALUES ({0},{0},NOW(),1)".format(message.from_user.id), "insert")
                 await FSMsearch.search.set()
                 await func_search(message, state)
 

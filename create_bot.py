@@ -7,15 +7,34 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 import os
 
-storage = MemoryStorage()
+async def select(loop, sql, pool):
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql)
+            return await cur.fetchone()
 
-config = configparser.ConfigParser()
-config.read('config.ini')
 
-bot = Bot(token=config['bot']['TOKEN']) #Получаем токен из config.ini
-dp = Dispatcher(bot, storage=storage) #Инициализируем бота
+async def insert(loop, sql, pool):
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql)
+            await conn.commit()
 
-loop = asyncio.get_event_loop()
+
+async def main(loop):
+    pool = await aiomysql.create_pool(
+        host=config['database']['host'],
+        user=config['database']['user'],
+        password=config['database']['password'],
+        db=config['database']['db'],
+        loop=loop)
+
+    c1 = select(loop=loop, sql='select * from minifw limit 1', pool=pool)
+    c2 = insert(loop=loop, sql="insert into minifw (name) values ('hello')", pool=pool)
+
+    tasks = [asyncio.ensure_future(c1), asyncio.ensure_future(c2)]
+    return await asyncio.gather(*tasks)
+
 
 @staticmethod
 async def con(request,task="select"):
@@ -32,3 +51,18 @@ async def con(request,task="select"):
         else:
             await cur.execute(request)
             await conn.commit()
+
+
+
+cur_loop = asyncio.get_event_loop()
+cur_loop.run_until_complete(main(cur_loop))
+
+storage = MemoryStorage()
+
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+bot = Bot(token=config['bot']['TOKEN']) #Получаем токен из config.ini
+dp = Dispatcher(bot, storage=storage) #Инициализируем бота
+
+loop = asyncio.get_event_loop()
