@@ -54,8 +54,8 @@ async def con(request,task="select"):
 
 
 
-cur_loop = asyncio.get_event_loop()
-cur_loop.run_until_complete(main(cur_loop))
+# cur_loop = asyncio.get_event_loop()
+# cur_loop.run_until_complete(main(cur_loop))
 
 storage = MemoryStorage()
 
